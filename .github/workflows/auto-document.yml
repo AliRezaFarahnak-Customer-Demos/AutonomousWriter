@@ -69,7 +69,7 @@ jobs:
 
           echo "Created issue #${ISSUE_URL}"
 
-          # Step 2: Assign copilot-swe-agent[bot] with agent_assignment
+          # Step 2: Assign copilot-swe-agent[bot] via PATCH (update issue)
           jq -n \
             --arg repo "$REPO" \
             '{
@@ -81,10 +81,10 @@ jobs:
                 custom_agent: "",
                 model: ""
               }
-            }' | gh api --method POST \
+            }' | gh api --method PATCH \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2026-03-10" \
-              "/repos/${REPO}/issues/${ISSUE_URL}/assignees" \
+              "/repos/${REPO}/issues/${ISSUE_URL}" \
               --input -
 
           echo "Assigned copilot to issue #${ISSUE_URL}"
