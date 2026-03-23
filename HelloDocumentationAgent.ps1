@@ -12,7 +12,7 @@
     Version is automatically updated by CI. Do not edit the $Version line manually.
 #>
 
-$Version = "1.0.0.2"
+$Version = "1.0.0.3"
 
 function Get-Greeting {
     param(
