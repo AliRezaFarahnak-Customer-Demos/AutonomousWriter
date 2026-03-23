@@ -53,22 +53,31 @@ jobs:
           DIFF=$(git diff HEAD~1 HEAD -- . ':!docs/' ':!.github/' | head -c 3000)
           SHA=${GITHUB_SHA::7}
 
-          gh api --method POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /repos/${{ github.repository }}/issues \
-            -f title="📝 Document changes for v$VERSION" \
-            -f body="Update docs/CHANGELOG.md — append a **v$VERSION** entry.
+          # Build JSON body — must use --input to avoid gh cli mangling [bot] as array syntax
+          jq -n \
+            --arg title "📝 Document changes for v$VERSION" \
+            --arg body "Update docs/CHANGELOG.md — append a **v$VERSION** entry.
 
           **Commit:** \`$SHA\` by @${{ github.actor }}
           **Build:** #${{ github.run_number }}
 
           \`\`\`diff
-          ${DIFF:-no diff}
+          $DIFF
           \`\`\`" \
-            -f 'assignees[]=copilot-swe-agent[bot]' \
-            -f "agent_assignment[target_repo]=${{ github.repository }}" \
-            -f "agent_assignment[base_branch]=main" \
-            -f "agent_assignment[custom_instructions]=Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md." \
-            -f "agent_assignment[custom_agent]=" \
-            -f "agent_assignment[model]="
+            --arg repo "${{ github.repository }}" \
+            '{
+              title: $title,
+              body: $body,
+              assignees: ["copilot-swe-agent[bot]"],
+              agent_assignment: {
+                target_repo: $repo,
+                base_branch: "main",
+                custom_instructions: "Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.",
+                custom_agent: "",
+                model: ""
+              }
+            }' | gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/issues \
+            --input -
