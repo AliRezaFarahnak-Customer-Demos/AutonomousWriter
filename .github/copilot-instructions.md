@@ -35,14 +35,10 @@ token. This is the production best practice because:
 - **Assigning issues to Copilot via REST API**:
   https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/create-a-pr#using-the-rest-api
 
-- **GitHub Agentic Workflows (gh-aw)** — alternative approach (requires PAT for Copilot engine):
-  https://github.com/github/gh-aw
-  https://github.github.com/gh-aw/reference/auth/
-  https://github.github.com/gh-aw/reference/engines/
-
 ### Key API details
 
 **REST API — Create issue and assign to Copilot:**
+
 ```bash
 gh api --method POST \
   -H "Accept: application/vnd.github+json" \
@@ -69,6 +65,7 @@ Requires header: `GraphQL-Features: issues_copilot_assignment_api_support,coding
 2. Use `createIssue` mutation with `assigneeIds: ["BOT_ID"]` and `agentAssignment` input.
 
 **Copilot Coding Agent Management API endpoints:**
+
 - `GET  /orgs/{org}/copilot/coding-agent/permissions` — check enabled repos
 - `PUT  /orgs/{org}/copilot/coding-agent/permissions` — set policy (all/selected/none)
 - `GET  /orgs/{org}/copilot/coding-agent/permissions/repositories` — list enabled repos
@@ -78,14 +75,6 @@ Requires header: `GraphQL-Features: issues_copilot_assignment_api_support,coding
 
 All require `X-GitHub-Api-Version: 2026-03-10`. Support GitHub App installation
 access tokens with `"Copilot agent settings"` org permission.
-
-## Why not gh-aw?
-
-GitHub Agentic Workflows (gh-aw) runs the AI agent **inside** the GitHub Action
-container. It's powerful but `COPILOT_GITHUB_TOKEN` **must currently be a PAT** —
-a GitHub App cannot be used for Copilot engine auth. For our use case (triggering
-the native Copilot Coding Agent via issue assignment), a GitHub App works and is
-the better practice.
 
 ## Agent Instructions
 
