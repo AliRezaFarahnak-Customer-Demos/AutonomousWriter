@@ -37,7 +37,7 @@ jobs:
           git commit -m "ci: bump version to $VERSION [skip ci]"
           git push
 
-      # ----- Mint GitHub App token with explicit permissions -----
+      # ----- Mint GitHub App token with all needed permissions -----
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -46,8 +46,12 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: AutonomousWriter
-          permissions: >-
-            {"actions":"write","contents":"write","issues":"write","pull_requests":"write","metadata":"read"}
+          permission-actions: write
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-metadata: read
+          permission-organization-copilot-seat-management: write
 
       # ----- Assign issue to Copilot Coding Agent -----
       - name: Create issue and assign to Copilot
