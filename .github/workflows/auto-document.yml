@@ -52,7 +52,7 @@ jobs:
                 agentAssignment: {
                   targetRepositoryId: $repoId,
                   baseRef: "main",
-                  customInstructions: "Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.",
+                    customInstructions: "Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md. You MUST open a pull request with your changes.",
                   customAgent: "",
                   model: ""
                 }
