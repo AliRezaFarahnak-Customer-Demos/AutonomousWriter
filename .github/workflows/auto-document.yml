@@ -69,7 +69,14 @@ jobs:
 
           echo "Created issue #${ISSUE_URL}"
 
-          # Step 2: Get repo and issue IDs, then assign via GraphQL
+          # Step 2: Ensure coding agent is enabled for this repo via Management API
+          REPO_NUMERIC_ID=$(gh api "/repos/${REPO}" --jq '.id')
+          gh api --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/orgs/${REPO%%/*}/copilot/coding-agent/permissions/repositories/${REPO_NUMERIC_ID}" || true
+
+          # Step 3: Get repo and issue IDs, then assign via GraphQL
           OWNER="${REPO%%/*}"
           REPONAME="${REPO##*/}"
 
