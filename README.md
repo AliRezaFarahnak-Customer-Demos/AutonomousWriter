@@ -1,128 +1,157 @@
 # AutonomousWriter
 
-> **Demo**: Copilot Coding Agent as an automatic documentation writer.
+Automatic changelog generation powered by the **Copilot Coding Agent**.
 
-On every push to `main`, a GitHub Actions workflow creates an issue with the
-code diff, assigns it to the Copilot Coding Agent via GraphQL, which then
-documents the changes in [`docs/CHANGELOG.md`](docs/CHANGELOG.md) and opens a PR.
+Every time a developer pushes code to `main`, the Copilot Coding Agent
+reads the diff, writes a versioned changelog entry in
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md), and opens a pull request — with
+zero human intervention.
 
-**Fully autonomous** — no human intervention after setup.
-
-## Architecture
+## How It Works
 
 ```
-Developer pushes code to main
+Developer pushes code
     ↓
-GitHub Actions workflow triggers
+GitHub Actions stamps the version → commits [skip ci]
     ↓
-1. Stamps HelloDocumentationAgent.ps1 with version 1.0.0.<build#>
-2. Commits the version bump [skip ci]
-3. Uses COPILOT_PAT to create an issue with the diff via GraphQL
-4. Assigns copilot-swe-agent[bot] with agentAssignment in the same call
+Creates a GitHub Issue with the diff via GraphQL
     ↓
-Copilot Coding Agent picks up the issue autonomously
+Copilot Coding Agent is assigned automatically
     ↓
-Reads the diff → appends to docs/CHANGELOG.md → opens a PR
+Agent reads the diff → appends to docs/CHANGELOG.md → opens a PR
 ```
 
-## Authentication
+The workflow uses the GraphQL `createIssue` mutation with `agentAssignment`
+to create an issue and assign `copilot-swe-agent[bot]` in a single API call.
+The agent follows the instructions in
+[`.github/copilot-instructions.md`](.github/copilot-instructions.md) to produce
+consistent, versioned documentation.
 
-| Secret | What it is | Why |
-|---|---|---|
-| `COPILOT_PAT` | Fine-grained PAT from a user with Copilot license | Required — the Copilot agent assignment API needs a user token with Copilot entitlement. GitHub App installation tokens cannot trigger the agent (see [Challenges](#challenges--what-we-learned)). |
+## Setup
 
-### Why a PAT and not a GitHub App?
+### Prerequisites
 
-We extensively tested GitHub App installation tokens. They can:
-- ✅ Create issues
-- ✅ Manage Copilot agent settings (enable/disable repos)
-- ❌ **Cannot** assign `copilot-swe-agent[bot]` — the GraphQL mutation checks the caller's **Copilot license**, and GitHub Apps don't have one
+- GitHub org with **Copilot Business** or **Enterprise**
+- Copilot Coding Agent **enabled** for the repository
+- A user (or service account) with a **Copilot license**
 
-**Production recommendation**: Create a dedicated machine user (service account),
-assign it a Copilot Business seat ($19/month), and use its PAT. This way the
-token isn't tied to any individual developer.
-
-## Setup Guide
-
-### 1. Enable Copilot Coding Agent for the repo
+### 1. Enable Copilot Coding Agent
 
 ```bash
-# Check current status
 gh api -H "X-GitHub-Api-Version: 2026-03-10" \
   /orgs/YOUR_ORG/copilot/coding-agent/permissions
-# Should return: {"enabled_repositories":"all"}
+# Expected: {"enabled_repositories":"all"}
 ```
 
 ### 2. Create a fine-grained PAT
 
-Go to https://github.com/settings/personal-access-tokens/new
+At https://github.com/settings/personal-access-tokens/new, create a token with:
 
-Permissions needed:
-- **Metadata**: Read-only
-- **Actions**: Read and write
-- **Contents**: Read and write
-- **Issues**: Read and write
-- **Pull requests**: Read and write
+| Permission | Access |
+|---|---|
+| Metadata | Read-only |
+| Actions | Read and write |
+| Contents | Read and write |
+| Issues | Read and write |
+| Pull requests | Read and write |
 
-### 3. Store as repo secret
+### 3. Store as a repo secret
 
 ```bash
 gh secret set COPILOT_PAT --body "github_pat_XXXX"
 ```
 
-### 4. Push code and watch it work
+### 4. Push and watch
 
 ```bash
-# Edit something
-echo "# test" >> HelloDocumentationAgent.ps1
-git add -A && git commit -m "test change" && git push
-# Watch: Actions tab → issue created → Copilot documents → PR opened
+git add -A && git commit -m "my change" && git push
 ```
 
-## Challenges & What We Learned
+The Actions tab will show the workflow running, an issue will be created, and
+the Copilot Coding Agent will open a PR updating the changelog.
 
-This project systematically explored every possible way to trigger the Copilot
-Coding Agent autonomously from a GitHub Actions workflow without a PAT.
+## Authentication
 
-### What we tried (and why it failed)
+The Copilot Coding Agent assignment requires a **user token with a Copilot
+license**. This is the only secret needed:
 
-| Approach | Result | Error |
-|---|---|---|
-| `GITHUB_TOKEN` + REST assignees | ❌ 422 | `copilot` not a valid assignee |
-| `gh api -f 'assignees[]=copilot-swe-agent[bot]'` | ❌ 422 | `[bot]` mangled as array syntax → sent `Copilot` |
-| GitHub App + REST `POST /issues` | ❌ 422 | Can't assign copilot in creation |
-| GitHub App + REST `POST /issues/{n}/assignees` | ❌ 403 | Forbidden (pre-permission acceptance) |
-| GitHub App + REST `PATCH /issues/{n}` | ⚠️ 200 but agent rejects | "Token doesn't have necessary permissions" |
-| GitHub App + GraphQL `suggestedActors` | ❌ Empty | Bot not visible to app tokens |
-| GitHub App + GraphQL `createIssue` + `agentAssignment` | ❌ FORBIDDEN | "Copilot is not enabled in this repository" |
-| GitHub App + GraphQL `addAssigneesToAssignable` | ❌ FORBIDDEN | Same as above |
-| Hardcoded bot ID (`BOT_kgDOC9w8XQ`) | ❌ FORBIDDEN | Same — checks caller's Copilot license |
-| gh-aw (Agentic Workflows) | ❌ Needs PAT | `COPILOT_GITHUB_TOKEN` must be a PAT |
-
-### What works
-
-| Approach | Result |
+| Secret | Purpose |
 |---|---|
-| **User PAT + GraphQL `createIssue` with `agentAssignment`** | ✅ Issue created, Copilot assigned, PR opened |
+| `COPILOT_PAT` | Fine-grained PAT — used to create the issue and assign the Copilot agent via GraphQL |
 
-### Root cause
+### Why a user token?
 
-The Copilot Coding Agent assignment is not just an API permission — it's a
-**license entitlement check**. GitHub's backend validates that the **caller**
-has an active Copilot subscription. GitHub App installation tokens don't carry
-license entitlements, so they always fail with "Copilot is not enabled."
+GitHub's Copilot Coding Agent performs a **license entitlement check** when
+assigned to an issue. The platform validates that the caller has an active
+Copilot subscription. This means:
 
-### Key technical details
+- `GITHUB_TOKEN` (built into Actions) → cannot assign the agent
+- GitHub App installation tokens → cannot assign the agent (apps don't hold Copilot licenses)
+- User tokens (PAT or OAuth) → work, because they carry the user's Copilot entitlement
 
-- Copilot bot global node ID: `BOT_kgDOC9w8XQ` (constant across all repos)
-- Required API header: `GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection`
-- The Management API (`/orgs/{org}/copilot/coding-agent/permissions`) works with GitHub App tokens — but it only manages settings, not agent assignment
-- The `copilot-swe-agent[bot]` name must be sent via JSON (not `-f` flags) to avoid `[bot]` being parsed as array syntax
+The **Copilot Coding Agent Management API** (for enabling/disabling repos)
+does support GitHub App tokens — but **managing settings** and **triggering
+the agent** are two separate operations with different auth requirements.
 
-## API References
+### Production recommendation: service account
 
-- [Copilot Coding Agent Management API (2026-03-10)](https://docs.github.com/en/rest/copilot/copilot-coding-agent-management?apiVersion=2026-03-10)
+For production and team use, create a dedicated **service account**:
+
+1. Create a GitHub account with a shared team email (e.g., `docs-bot@contoso.com`)
+2. Add it to the org and assign a **Copilot Business seat** ($19/month)
+3. Grant it **write access** to the repos
+4. Create a fine-grained PAT from that account
+5. Store it as an org-level secret (`COPILOT_PAT`)
+
+This pattern is widely used across organizations for CI/CD and bot automation.
+The token is not tied to any individual developer, survives employee turnover,
+and provides a clear audit trail.
+
+## Technical Details
+
+### GraphQL API
+
+The workflow uses the `createIssue` GraphQL mutation with `agentAssignment`:
+
+```graphql
+mutation($title: String!, $body: String!, $repoId: ID!, $botId: ID!) {
+  createIssue(input: {
+    repositoryId: $repoId,
+    title: $title,
+    body: $body,
+    assigneeIds: [$botId],
+    agentAssignment: {
+      targetRepositoryId: $repoId,
+      baseRef: "main",
+      customInstructions: "Only modify docs/CHANGELOG.md...",
+      customAgent: "",
+      model: ""
+    }
+  }) {
+    issue { number title }
+  }
+}
+```
+
+Required header:
+```
+GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection
+```
+
+Copilot bot global node ID: `BOT_kgDOC9w8XQ`
+
+### Management API vs. Assignment API
+
+| Operation | API | App token? | User token? |
+|---|---|---|---|
+| Enable/disable repos | `PUT /orgs/{org}/copilot/coding-agent/permissions` | ✅ | ✅ |
+| Trigger agent (assign to issue) | GraphQL `createIssue` with `agentAssignment` | ❌ | ✅ |
+
+## References
+
+- [Copilot Coding Agent Management API](https://docs.github.com/en/rest/copilot/copilot-coding-agent-management?apiVersion=2026-03-10)
 - [Assigning issues to Copilot via API](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/create-a-pr#using-the-rest-api)
+- [About Copilot Coding Agent](https://docs.github.com/en/copilot/using-github-copilot/coding-agent/about-assigning-tasks-to-copilot)
 - [Installation Access Tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
 ## Repository Structure
