@@ -69,22 +69,71 @@ jobs:
 
           echo "Created issue #${ISSUE_URL}"
 
-          # Step 2: Assign copilot-swe-agent[bot] via PATCH (update issue)
-          jq -n \
-            --arg repo "$REPO" \
-            '{
-              assignees: ["copilot-swe-agent[bot]"],
-              agent_assignment: {
-                target_repo: $repo,
-                base_branch: "main",
-                custom_instructions: "Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.",
-                custom_agent: "",
-                model: ""
-              }
-            }' | gh api --method PATCH \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "/repos/${REPO}/issues/${ISSUE_URL}" \
-              --input -
+          # Step 2: Get copilot bot ID and repo ID via GraphQL
+          OWNER="${REPO%%/*}"
+          REPONAME="${REPO##*/}"
 
-          echo "Assigned copilot to issue #${ISSUE_URL}"
+          BOT_ID=$(gh api graphql -f query="
+            query {
+              repository(owner: \"${OWNER}\", name: \"${REPONAME}\") {
+                suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
+                  nodes {
+                    login
+                    ... on Bot { id }
+                    ... on User { id }
+                  }
+                }
+              }
+            }" --jq '.data.repository.suggestedActors.nodes[] | select(.login == "copilot-swe-agent") | .id')
+
+          echo "Copilot bot ID: ${BOT_ID}"
+
+          REPO_ID=$(gh api graphql -f query="
+            query {
+              repository(owner: \"${OWNER}\", name: \"${REPONAME}\") {
+                id
+              }
+            }" --jq '.data.repository.id')
+
+          echo "Repo ID: ${REPO_ID}"
+
+          ISSUE_ID=$(gh api graphql -f query="
+            query {
+              repository(owner: \"${OWNER}\", name: \"${REPONAME}\") {
+                issue(number: ${ISSUE_URL}) {
+                  id
+                }
+              }
+            }" --jq '.data.repository.issue.id')
+
+          echo "Issue ID: ${ISSUE_ID}"
+
+          # Step 3: Assign copilot via GraphQL mutation
+          gh api graphql \
+            -H "GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection" \
+            -f query="
+              mutation {
+                addAssigneesToAssignable(input: {
+                  assignableId: \"${ISSUE_ID}\",
+                  assigneeIds: [\"${BOT_ID}\"],
+                  agentAssignment: {
+                    targetRepositoryId: \"${REPO_ID}\",
+                    baseRef: \"main\",
+                    customInstructions: \"Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.\",
+                    customAgent: \"\",
+                    model: \"\"
+                  }
+                }) {
+                  assignable {
+                    ... on Issue {
+                      id
+                      title
+                      assignees(first: 10) {
+                        nodes { login }
+                      }
+                    }
+                  }
+                }
+              }"
+
+          echo "Assigned copilot to issue #${ISSUE_URL} via GraphQL"
