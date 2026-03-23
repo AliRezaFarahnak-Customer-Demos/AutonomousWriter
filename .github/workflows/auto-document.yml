@@ -1,0 +1,114 @@
+name: Auto-Document with Copilot Coding Agent
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '.github/copilot-instructions.md'
+      - 'README.md'
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  stamp-version-and-trigger-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------------------------------
+      # 1. Checkout the repo
+      # ---------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2          # need parent commit for diff
+
+      # ---------------------------------------------------------------
+      # 2. Stamp the version in the PowerShell script
+      # ---------------------------------------------------------------
+      - name: Stamp version
+        run: |
+          VERSION="1.0.0.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/^\$Version = \".*\"$/\$Version = \"$VERSION\"/" HelloDocumentationAgent.ps1
+          echo "Stamped version: $VERSION"
+
+      # ---------------------------------------------------------------
+      # 3. Commit the version bump (skip CI to avoid loop)
+      # ---------------------------------------------------------------
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add HelloDocumentationAgent.ps1
+          # Only commit if there are changes
+          git diff --cached --quiet && echo "No version change" && exit 0
+          git commit -m "ci: bump version to ${{ env.VERSION }} [skip ci]"
+          git push
+
+      # ---------------------------------------------------------------
+      # 4. Collect the diff for context
+      # ---------------------------------------------------------------
+      - name: Collect diff
+        id: diff
+        run: |
+          DIFF=$(git diff HEAD~1 HEAD -- . ':!docs/' ':!.github/' | head -c 3000)
+          # Escape for GitHub Actions multi-line output
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "diff<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$DIFF" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # 5. Trigger Copilot Coding Agent via an assigned issue
+      # ---------------------------------------------------------------
+      - name: Create documentation issue for Copilot
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const version = process.env.VERSION;
+            const diff = `${{ steps.diff.outputs.diff }}`;
+            const sha = context.sha.substring(0, 7);
+            const actor = context.actor;
+
+            const body = [
+              `## Auto-Documentation Request — v${version}`,
+              ``,
+              `**Commit:** \`${sha}\` by @${actor}`,
+              `**Build:** #${{ github.run_number }}`,
+              ``,
+              `### Instructions`,
+              ``,
+              `1. Open \`docs/CHANGELOG.md\`.`,
+              `2. Append a new section at the **bottom** of the file with this format:`,
+              ``,
+              `\`\`\`markdown`,
+              `## v${version}`,
+              ``,
+              `**Date:** YYYY-MM-DD  `,
+              `**Commit:** \`${sha}\`  `,
+              `**Author:** @${actor}`,
+              ``,
+              `### Changes`,
+              ``,
+              `- (summarize each meaningful change from the diff below)`,
+              `\`\`\``,
+              ``,
+              `### Diff for context`,
+              ``,
+              `\`\`\`diff`,
+              diff || '_No code diff detected (docs-only or config change)._',
+              `\`\`\``,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `📝 Document changes for v${version}`,
+              body: body,
+              assignees: ['copilot'],
+              labels: ['documentation', 'copilot-agent']
+            });
