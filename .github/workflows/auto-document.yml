@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   issues: write
 
 jobs:
@@ -21,32 +21,15 @@ jobs:
         with:
           fetch-depth: 2
 
-      # ----- Stamp version -----
-      - name: Stamp version
-        run: |
-          VERSION="1.0.0.${{ github.run_number }}"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          sed -i "s/^\$Version = \".*\"$/\$Version = \"$VERSION\"/" HelloDocumentationAgent.ps1
-
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add HelloDocumentationAgent.ps1
-          git diff --cached --quiet && exit 0
-          git commit -m "ci: bump version to $VERSION [skip ci]"
-          git push
-
-      # ----- Create issue & assign to Copilot (requires user token) -----
       - name: Create issue and assign to Copilot
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+          VERSION: "1.0.0.${{ github.run_number }}"
         run: |
           DIFF=$(git diff HEAD~1 HEAD -- . ':!docs/' ':!.github/' | head -c 3000)
           SHA=${GITHUB_SHA::7}
           REPO="${{ github.repository }}"
           ACTOR="${{ github.actor }}"
-          BUILD="${{ github.run_number }}"
           OWNER="${REPO%%/*}"
           REPONAME="${REPO##*/}"
           BOT_ID="BOT_kgDOC9w8XQ"
@@ -56,7 +39,7 @@ jobs:
               repository(owner: \"${OWNER}\", name: \"${REPONAME}\") { id }
             }" --jq '.data.repository.id')
 
-          BODY=$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** \x60%s\x60 by @%s\n**Build:** #%s\n\n\x60\x60\x60diff\n%s\n\x60\x60\x60' "$VERSION" "$SHA" "$ACTOR" "$BUILD" "$DIFF")
+          BODY=$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** \x60%s\x60 by @%s\n**Build:** #%s\n\n\x60\x60\x60diff\n%s\n\x60\x60\x60' "$VERSION" "$SHA" "$ACTOR" "${{ github.run_number }}" "$DIFF")
 
           gh api graphql \
             -H "GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection" \
