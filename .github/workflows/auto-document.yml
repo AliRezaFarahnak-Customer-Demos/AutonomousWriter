@@ -37,26 +37,16 @@ jobs:
           git commit -m "ci: bump version to $VERSION [skip ci]"
           git push
 
-      # ----- Mint GitHub App token (all app permissions, no restrictions) -----
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
-      # ----- Assign issue to Copilot Coding Agent -----
+      # ----- Create issue & assign to Copilot (requires user token) -----
       - name: Create issue and assign to Copilot
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
         run: |
           DIFF=$(git diff HEAD~1 HEAD -- . ':!docs/' ':!.github/' | head -c 3000)
           SHA=${GITHUB_SHA::7}
           REPO="${{ github.repository }}"
           ACTOR="${{ github.actor }}"
           BUILD="${{ github.run_number }}"
-
-          # Step 1: Create issue AND assign copilot in one GraphQL call
           OWNER="${REPO%%/*}"
           REPONAME="${REPO##*/}"
           BOT_ID="BOT_kgDOC9w8XQ"
@@ -66,35 +56,32 @@ jobs:
               repository(owner: \"${OWNER}\", name: \"${REPONAME}\") { id }
             }" --jq '.data.repository.id')
 
-          BODY=$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** `%s` by @%s\n**Build:** #%s\n\n```diff\n%s\n```' "$VERSION" "$SHA" "$ACTOR" "$BUILD" "$DIFF")
+          BODY=$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** \x60%s\x60 by @%s\n**Build:** #%s\n\n\x60\x60\x60diff\n%s\n\x60\x60\x60' "$VERSION" "$SHA" "$ACTOR" "$BUILD" "$DIFF")
 
           gh api graphql \
             -H "GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection" \
-            -f query="
-              mutation(\$title: String!, \$body: String!, \$repoId: ID!, \$botId: ID!) {
-                createIssue(input: {
-                  repositoryId: \$repoId,
-                  title: \$title,
-                  body: \$body,
-                  assigneeIds: [\$botId],
-                  agentAssignment: {
-                    targetRepositoryId: \$repoId,
-                    baseRef: \"main\",
-                    customInstructions: \"Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.\",
-                    customAgent: \"\",
-                    model: \"\"
-                  }
-                }) {
-                  issue {
-                    number
-                    title
-                    assignees(first: 5) { nodes { login } }
-                  }
+            -f query='mutation($title: String!, $body: String!, $repoId: ID!, $botId: ID!) {
+              createIssue(input: {
+                repositoryId: $repoId,
+                title: $title,
+                body: $body,
+                assigneeIds: [$botId],
+                agentAssignment: {
+                  targetRepositoryId: $repoId,
+                  baseRef: "main",
+                  customInstructions: "Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.",
+                  customAgent: "",
+                  model: ""
                 }
-              }" \
+              }) {
+                issue {
+                  number
+                  title
+                  assignees(first: 5) { nodes { login } }
+                }
+              }
+            }' \
             -f "title=📝 Document changes for v${VERSION}" \
             -f "body=${BODY}" \
             -f "repoId=${REPO_ID}" \
             -f "botId=${BOT_ID}"
-
-          echo "Issue created and assigned to Copilot via createIssue mutation"
