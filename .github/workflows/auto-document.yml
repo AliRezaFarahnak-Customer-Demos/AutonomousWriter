@@ -56,31 +56,9 @@ jobs:
           ACTOR="${{ github.actor }}"
           BUILD="${{ github.run_number }}"
 
-          # Step 1: Create the issue (without assignee)
-          ISSUE_URL=$(jq -n \
-            --arg title "📝 Document changes for v${VERSION}" \
-            --arg body "$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** `%s` by @%s\n**Build:** #%s\n\n```diff\n%s\n```' "$VERSION" "$SHA" "$ACTOR" "$BUILD" "$DIFF")" \
-            '{ title: $title, body: $body }' | \
-            gh api --method POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "/repos/${REPO}/issues" \
-              --input - --jq '.number')
-
-          echo "Created issue #${ISSUE_URL}"
-
-          # Step 2: Ensure coding agent is enabled for this repo via Management API
-          REPO_NUMERIC_ID=$(gh api "/repos/${REPO}" --jq '.id')
-          gh api --method PUT \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "/orgs/${REPO%%/*}/copilot/coding-agent/permissions/repositories/${REPO_NUMERIC_ID}" || true
-
-          # Step 3: Get repo and issue IDs, then assign via GraphQL
+          # Step 1: Create issue AND assign copilot in one GraphQL call
           OWNER="${REPO%%/*}"
           REPONAME="${REPO##*/}"
-
-          # Copilot bot global node ID (constant across all repos)
           BOT_ID="BOT_kgDOC9w8XQ"
 
           REPO_ID=$(gh api graphql -f query="
@@ -88,41 +66,35 @@ jobs:
               repository(owner: \"${OWNER}\", name: \"${REPONAME}\") { id }
             }" --jq '.data.repository.id')
 
-          ISSUE_ID=$(gh api graphql -f query="
-            query {
-              repository(owner: \"${OWNER}\", name: \"${REPONAME}\") {
-                issue(number: ${ISSUE_URL}) { id }
-              }
-            }" --jq '.data.repository.issue.id')
+          BODY=$(printf 'Update docs/CHANGELOG.md — append a **v%s** entry.\n\n**Commit:** `%s` by @%s\n**Build:** #%s\n\n```diff\n%s\n```' "$VERSION" "$SHA" "$ACTOR" "$BUILD" "$DIFF")
 
-          echo "Bot=$BOT_ID Repo=$REPO_ID Issue=$ISSUE_ID"
-
-          # Assign copilot via GraphQL mutation
           gh api graphql \
             -H "GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection" \
             -f query="
-              mutation {
-                addAssigneesToAssignable(input: {
-                  assignableId: \"${ISSUE_ID}\",
-                  assigneeIds: [\"${BOT_ID}\"],
+              mutation(\$title: String!, \$body: String!, \$repoId: ID!, \$botId: ID!) {
+                createIssue(input: {
+                  repositoryId: \$repoId,
+                  title: \$title,
+                  body: \$body,
+                  assigneeIds: [\$botId],
                   agentAssignment: {
-                    targetRepositoryId: \"${REPO_ID}\",
+                    targetRepositoryId: \$repoId,
                     baseRef: \"main\",
                     customInstructions: \"Only modify docs/CHANGELOG.md. Append at the bottom. Follow .github/copilot-instructions.md.\",
                     customAgent: \"\",
                     model: \"\"
                   }
                 }) {
-                  assignable {
-                    ... on Issue {
-                      id
-                      title
-                      assignees(first: 10) {
-                        nodes { login }
-                      }
-                    }
+                  issue {
+                    number
+                    title
+                    assignees(first: 5) { nodes { login } }
                   }
                 }
-              }"
+              }" \
+            -f "title=📝 Document changes for v${VERSION}" \
+            -f "body=${BODY}" \
+            -f "repoId=${REPO_ID}" \
+            -f "botId=${BOT_ID}"
 
-          echo "Assigned copilot to issue #${ISSUE_URL} via GraphQL"
+          echo "Issue created and assigned to Copilot via createIssue mutation"
